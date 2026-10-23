@@ -13,3 +13,7 @@
 # change (they were already LF); only the checkout does.
 scripts/sources/cache/** text eol=lf
 src/main/data/spells.json text eol=lf
+
+# The in-game /outputfile dumps are CRLF on disk and the tests assert it; do not depend on a
+# machine's core.autocrlf for that.
+tests/fixtures/*-Achievements.txt text eol=crlf
