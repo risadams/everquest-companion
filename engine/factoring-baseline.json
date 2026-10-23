@@ -183,7 +183,7 @@
       "file": "crates/eqlog/src/parse/world.rs",
       "metric": "file-lines",
       "name": "",
-      "value": 445
+      "value": 432
     },
     {
       "file": "crates/eqlog/src/spelldb/overlay.rs",
@@ -273,7 +273,7 @@
       "file": "crates/fold/src/combat/routing.rs",
       "metric": "file-lines",
       "name": "",
-      "value": 1064
+      "value": 1063
     },
     {
       "file": "crates/fold/src/combat/spellfacts.rs",
@@ -285,7 +285,7 @@
       "file": "crates/fold/src/combat/state.rs",
       "metric": "file-lines",
       "name": "",
-      "value": 526
+      "value": 524
     },
     {
       "file": "crates/fold/src/combat/views.rs",
@@ -375,7 +375,7 @@
       "file": "crates/fold/src/modules/buffs.rs",
       "metric": "file-lines",
       "name": "",
-      "value": 536
+      "value": 521
     },
     {
       "file": "crates/fold/src/modules/buffs.rs",

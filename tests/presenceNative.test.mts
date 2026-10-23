@@ -103,7 +103,9 @@ test('THE RUNNING SCAN finds a process under a given root, and never confuses -1
   // default — whether every overlay is on screen. On JOS-164's reporting machine the .NET version
   // of this answered 0 for a machine with the game running, which hides every overlay forever.
   const s = surface()
-  const ownRoot = eqRootPrefix(dirname(process.execPath))
+  // The kernel's own answer for this pid, not `process.execPath`: a symlinked install (nvm for
+  // Windows) reports the link path there and the real path from the kernel.
+  const ownRoot = eqRootPrefix(dirname(s.imagePath(process.pid) || process.execPath))
   assert.equal(s.eqRunning(ownRoot), 1, 'this very process lives under that root')
 
   // NOT asserted as 0: the machine running this suite may have EverQuest open, and that is a

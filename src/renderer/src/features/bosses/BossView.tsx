@@ -22,9 +22,12 @@ import { getBossData } from '../../data'
 import { useBossKills } from './useBossKills'
 import type { BossKill, TargetStatus } from './bossStatus'
 import { CategorySection, LoadoutSections } from './BossSections'
-import { untilReset } from './lockout'
+import { untilReset, hasCreditedAmbiguousKill, type LockoutWindow, type TierLock } from './lockout'
 import { useLockoutWeek } from './useLockoutWeek'
+import { useWeekClears, type WeekClearsApi } from './useWeekClears'
+import { bossClearKey } from './weekClears'
 import { defeatedThisWeek, everDefeated, filterRoster } from './rosterFilter'
+import { useHiddenRoster } from './useHiddenTargets'
 import type { MobTarget } from '../mobs/mobTarget'
 import Confetti from '../../lib/Confetti'
 
@@ -65,6 +68,25 @@ function loadMode(): Mode {
 
 const bosses = getBossData()
 
+/**
+ * The toolbar's tally line — the denominator every filter is measured against (see the roster
+ * note in BossView), folded outside the component because the view is at the measured
+ * per-function ceiling and this is a pure sentence over inputs the view already owns.
+ */
+function tallyLine(
+  mode: Mode,
+  roster: TargetStatus[],
+  lockOf: (s: TargetStatus) => TierLock[],
+  week: LockoutWindow
+): string {
+  if (mode === 'week') {
+    const locked = roster.filter((s) => lockOf(s).length > 0).length
+    return `${locked} / ${roster.length} locked this week · resets in ${untilReset(week)} · green rung = cleared`
+  }
+  const everKilled = roster.filter((s) => s.killed).length
+  return `${everKilled} / ${roster.length} defeated · badge = highest instance tier`
+}
+
 // Mode / search / defeated-only / grouping / density, plus the running tally on the right.
 function BossToolbar({
   mode,
@@ -80,12 +102,16 @@ function BossToolbar({
   onModeChange: (m: Mode | null) => void
   query: string
   onQueryChange: (q: string) => void
-  /** The two switches, bundled so the toolbar keeps a readable parameter list. */
+  /** The switches, bundled so the toolbar keeps a readable parameter list. */
   filters: {
     defeatedOnly: boolean
     onDefeatedOnlyChange: (v: boolean) => void
     byLoadout: boolean
     onByLoadoutChange: (v: boolean) => void
+    /** How many targets are hidden (issue #32). Zero ⇒ the switch is not drawn at all. */
+    hiddenCount: number
+    showHidden: boolean
+    onShowHiddenChange: (v: boolean) => void
   }
   density: Density
   onDensityChange: (d: Density | null) => void
@@ -138,6 +164,22 @@ function BossToolbar({
         }
         label="By class loadout"
       />
+      {/* THE HIDE FLAG'S PEEK (issue #32): drawn only while something IS hidden, so the toolbar
+          pays nothing until the feature is used, and labelled with the count because the number
+          is the whole reason to flip it — "what am I not seeing". While on, hidden cards render
+          dimmed with their restore control; the set itself moves only on the card's own button. */}
+      {filters.hiddenCount > 0 && (
+        <FormControlLabel
+          control={
+            <Switch
+              data-testid="boss-show-hidden"
+              checked={filters.showHidden}
+              onChange={(e) => filters.onShowHiddenChange(e.target.checked)}
+            />
+          }
+          label={`Hidden (${String(filters.hiddenCount)})`}
+        />
+      )}
       <ToggleButtonGroup
         size="small"
         exclusive
@@ -153,6 +195,27 @@ function BossToolbar({
       </Typography>
     </Stack>
   )
+}
+
+/**
+ * The per-card manual base-rung bundle for the week view (section 2a). Module scope so BossView's
+ * body stays inside its line budget; the component wraps it in `useMemo` for a stable identity.
+ * `canMarkBase` gates on a credited open-world/unknown kill THIS week; `baseTs` / `onToggleBase`
+ * are the live mark and its toggle, keyed by the roster's name identity.
+ */
+function weekManualClear(
+  weekClears: WeekClearsApi,
+  week: LockoutWindow
+): {
+  baseTs: (s: TargetStatus) => number | undefined
+  canMarkBase: (s: TargetStatus) => boolean
+  onToggleBase: (s: TargetStatus) => void
+} {
+  return {
+    baseTs: (s) => weekClears.liveBaseTs(bossClearKey(s.target.name), week),
+    canMarkBase: (s) => weekClears.canToggle && hasCreditedAmbiguousKill(s.tiers, week),
+    onToggleBase: (s) => weekClears.toggle(bossClearKey(s.target.name), week)
+  }
 }
 
 /**
@@ -196,6 +259,9 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   }, [])
 
   const { statuses } = useBossKills(bosses.targets, { onKill })
+  // Hidden targets (issue #32): the persisted set, the unpersisted peek, and the visible
+  // roster the tally reads. The bundle's doc (useHiddenTargets.ts) carries the rules.
+  const { hidden, showHidden, setShowHidden, roster } = useHiddenRoster(statuses)
 
   const setDensityPersist = (d: Density | null): void => {
     if (!d) return
@@ -208,19 +274,21 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
   // — since JOS-237 — the "Defeated only" filter all read this same window. Idle on OVERALL.
   const { week, lockOf } = useLockoutWeek(mode === 'week')
 
+  // The manual base-rung clear (section 2a): one per-card bundle for the week view. `useMemo` only
+  // for a stable identity — the reads inside are cheap (per boss per render, fine at roster scale).
+  const weekClears = useWeekClears()
+  const manualClear = useMemo(() => (mode === 'week' ? weekManualClear(weekClears, week) : undefined), [mode, week, weekClears])
+
   /**
    * WHAT THE SWITCH FILTERS ON, and the whole of JOS-237 (rosterFilter.ts carries the argument).
    * The all-time flag is right for the OVERALL roster and wrong for the week view, which is about
    * this reset week and nothing else — so the predicate is the mode's, not the roster's.
    */
-  const defeated = useMemo(
-    () => (mode === 'week' ? defeatedThisWeek(week) : everDefeated),
-    [mode, week]
-  )
+  const defeated = useMemo(() => (mode === 'week' ? defeatedThisWeek(week) : everDefeated), [mode, week])
 
   const filtered = useMemo(
-    () => filterRoster(statuses, { query, defeatedOnly, defeated }),
-    [statuses, query, defeatedOnly, defeated]
+    () => filterRoster(statuses, { query, defeatedOnly, defeated, hidden: hidden.keys, showHidden }),
+    [statuses, query, defeatedOnly, defeated, hidden.keys, showHidden]
   )
 
   const byCategory = useMemo(() => {
@@ -235,24 +303,26 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
     )
   }, [filtered])
 
-  // The tally counts the WHOLE roster, never `filtered` — it is the denominator the filter is
-  // measured against, so it must not move when a switch is flipped.
-  const locked = statuses.filter((s) => lockOf(s).length > 0).length
-  const everKilled = statuses.filter((s) => s.killed).length
-  const tally =
-    mode === 'week'
-      ? `${locked} / ${statuses.length} locked this week · resets in ${untilReset(week)} · green rung = cleared`
-      : `${everKilled} / ${statuses.length} defeated · badge = highest instance tier`
+  // The tally counts the ROSTER, never `filtered` — the denominator the filters are measured
+  // against, so it must not move when a switch is flipped. Since issue #32 the roster is the
+  // VISIBLE one (useHiddenRoster): a hidden target leaves the denominator too.
+  const tally = tallyLine(mode, roster, lockOf, week)
   const section = {
     compact,
     minCol: compact ? 116 : 180,
     flashing,
     onOpenMob,
-    ...(mode === 'week' ? { lockOf } : {})
+    hiddenOf: hidden.has,
+    onToggleHidden: hidden.toggle,
+    ...(mode === 'week' ? { lockOf, manualClear } : {})
   }
 
+  // `data-week-clears-ready` (week view only): whether useWeekClears has learned the character. A
+  // rung is markable only when it is `true`, so an e2e that finds no markable rung can tell
+  // "nothing eligible this week" (fine) from "the store never bootstrapped" (Critical 1 regressed).
+  const weekClearsReady = mode === 'week' ? String(weekClears.canToggle) : undefined
   return (
-    <Stack spacing={1.5} sx={{ height: '100%', position: 'relative' }}>
+    <Stack data-testid="boss-view" data-week-clears-ready={weekClearsReady} spacing={1.5} sx={{ height: '100%', position: 'relative' }}>
       {burst != null && <Confetti key={burst} onDone={() => setBurst(null)} />}
       <BossToolbar
         mode={mode}
@@ -269,7 +339,10 @@ export default function BossView({ onOpenMob }: { onOpenMob: (t: MobTarget) => v
           defeatedOnly,
           onDefeatedOnlyChange: setDefeatedOnly,
           byLoadout,
-          onByLoadoutChange: setByLoadout
+          onByLoadoutChange: setByLoadout,
+          hiddenCount: hidden.size,
+          showHidden,
+          onShowHiddenChange: setShowHidden
         }}
         density={density}
         onDensityChange={setDensityPersist}

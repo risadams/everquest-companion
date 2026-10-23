@@ -180,6 +180,88 @@ mod tests {
         assert!(out.starts_with(r#"{"kind":"unknown""#), "{out}");
     }
 
+    /// The Dungeon Crawl pays out of a chest, not a corpse: the same four sentences with
+    /// `Reward Chest` where the corpse was, and the chest is the source.
+    #[test]
+    fn a_reward_chest_is_a_loot_source_like_a_corpse() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] You looted 4 Mote of Infinitesimal Potential from Reward Chest and stored it in your currency",
+        );
+        assert!(
+            out.ends_with(r#""item":"Mote of Infinitesimal Potential","source":"Reward Chest","disposition":"currency","count":4}"#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] You looted a Shin Greaves +2 from Reward Chest and sold it for free.",
+        );
+        assert!(
+            out.contains(r#""source":"Reward Chest","disposition":"sold""#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] You looted a Crystallized Sulfur from Reward Chest and stored it in your tradeskill depot",
+        );
+        assert!(
+            out.contains(r#""source":"Reward Chest","disposition":"depot""#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] You looted a Thick Banded Belt +3 from Reward Chest to create a Thick Banded Belt +4",
+        );
+        assert!(out.ends_with(r#""source":"Reward Chest","disposition":"combined","created":"Thick Banded Belt +4"}"#), "{out}");
+        // …and a corpse still loses its possessive, as it always did.
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] You looted a Wind Rune Lena from a spiroc vanquisher's corpse and stored it in your currency",
+        );
+        assert!(
+            out.contains(r#""source":"a spiroc vanquisher","disposition":"currency""#),
+            "{out}"
+        );
+    }
+
+    /// The dashed form already parsed a chest payout, as an item CALLED `Ivory from Reward Chest`
+    /// with no source. The chest is named rather than ` corpse` made optional, because here
+    /// nothing follows the source to end it: an item may carry a `from` of its own.
+    #[test]
+    fn the_dashed_loot_line_takes_the_chest_out_of_the_item_name() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] --You have looted a Ivory from Reward Chest.--",
+        );
+        assert!(
+            out.ends_with(r#""item":"Ivory","source":"Reward Chest"}"#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] --You have looted 2 Drop of Mercury from Reward Chest.--",
+        );
+        assert!(
+            out.ends_with(r#""item":"Drop of Mercury","source":"Reward Chest","count":2}"#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] --You have looted a Bone Chips from a rat's corpse.--",
+        );
+        assert!(
+            out.ends_with(r#""item":"Bone Chips","source":"a rat"}"#),
+            "{out}"
+        );
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:47 2026] --You have looted a Letter from Bob.--",
+        );
+        assert!(out.ends_with(r#""item":"Letter from Bob"}"#), "{out}");
+    }
+
     #[test]
     fn the_group_kind_writes_change_before_the_envelope() {
         let p = bare();
@@ -227,6 +309,27 @@ mod tests {
         assert!(out.contains(r#""attacker":null"#), "{out}");
     }
 
+    /// A tick on the player is second person, `You have taken`, and always names its caster.
+    #[test]
+    fn a_dot_tick_on_the_player_is_damage_from_its_caster() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You have taken 53 damage from Swarm of Pain by a spiroc revolter.",
+        );
+        assert!(out.starts_with(r#"{"kind":"damage","#), "{out}");
+        assert!(
+            out.contains(r#""attacker":"a spiroc revolter","target":"You","amount":53,"dtype":"dot","skill":"Swarm of Pain""#),
+            "{out}"
+        );
+        // …and the depot's sentence of the same opening is not damage.
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You have taken 914 Phosphorous Powder from your personal depot.",
+        );
+        assert!(out.starts_with(r#"{"kind":"unknown","#), "{out}");
+    }
+
     #[test]
     fn the_experience_percentage_is_the_one_float_in_the_stream() {
         let p = bare();
@@ -244,6 +347,48 @@ mod tests {
         // …and a line that states none omits the key rather than saying zero.
         let out = parse_one(&p, "[Wed Aug 19 16:21:54 2026] You gain experience!");
         assert!(out.ends_with(r#""party":false}"#), "{out}");
+
+        // EQ Legends prints a ` (with a bonus)` infix on ~99% of real XP lines (raid log
+        // sweep 2026-09-06). It sits between `experience` and `!`; the percent, when stated,
+        // still trails. All four combinations are the same event as their plain twin.
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain experience (with a bonus)! (0.092%)",
+        );
+        assert!(out.starts_with(r#"{"kind":"expGain","#), "{out}");
+        assert!(out.ends_with(r#""party":false,"pct":0.092}"#), "{out}");
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain party experience (with a bonus)! (1%)",
+        );
+        assert!(out.ends_with(r#""party":true,"pct":1}"#), "{out}");
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain experience (with a bonus)!",
+        );
+        assert!(out.ends_with(r#""party":false}"#), "{out}");
+    }
+
+    #[test]
+    fn a_bonus_parenthetical_is_the_same_gain_carrying_the_same_percentage() {
+        let p = bare();
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain experience (with a bonus)! (3.118%)",
+        );
+        assert!(out.ends_with(r#""party":false,"pct":3.118}"#), "{out}");
+        // The two parentheticals are independent; this arm carries no sample of its own.
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] You gain party experience (with a bonus)! (1.5%)",
+        );
+        assert!(out.ends_with(r#""party":true,"pct":1.5}"#), "{out}");
+        // …and a player QUOTING the message is chat: the anchors still refuse it.
+        let out = parse_one(
+            &p,
+            "[Wed Aug 19 16:21:54 2026] Dekar tells General1:1, 'you should be seeing \"You gain experience (plus a bonus)\"'",
+        );
+        assert!(!out.contains(r#""kind":"expGain""#), "{out}");
     }
 
     #[test]

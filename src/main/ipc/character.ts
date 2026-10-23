@@ -11,6 +11,7 @@ import { listCharacters, parseLogName, resolveEqDir } from '../log/config'
 // the character list. `listCharacters()` is the arm that answers when it cannot — see serveLogs.ts.
 import { serveCharacterList } from '../dataServer/serveLogs'
 import { loadInventory } from '../inventory/parseInventory'
+import { pushAppKnowledge } from '../dataServer/definePush'
 import {
   activeCharId,
   applyEqDirChange,
@@ -127,6 +128,8 @@ export function registerCharacterIpc(): void {
     const res = loadInventory(active?.name, active?.server, inventoryWrittenAt)
     if (!res) return { ok: false as const, error: 'No *-Inventory.txt found in the EQ folder.' }
     setInventory(activeCharId(), res.counts, res.source)
+    // …and the same news for the buff engine's proc gate, exactly as `loadInventoryNow` sends it.
+    pushAppKnowledge('buffTrust.define')
     const progress = getProgress(activeCharId())
     // A MANUAL RE-READ IS THE SAME NEWS AS AN AUTOMATIC ONE (JOS-431). This pushed `progress` and
     // nothing else, so the surfaces that read the FILE's own status — the `/outputfile` freshness
@@ -138,8 +141,8 @@ export function registerCharacterIpc(): void {
     sendToMain(IPC.onProgress, progress)
     return { ok: true as const, path: res.path, loadedAt: res.loadedAt, progress }
   })
-  ipcMain.handle(IPC.setQuestTurnIns, (_e, questKey: string, instants: number[]) => {
-    const progress = setQuestTurnIns(activeCharId(), questKey, instants)
+  ipcMain.handle(IPC.setQuestTurnIns, (_e, questKey: string, instants: number[], rejected?: number[]) => {
+    const progress = setQuestTurnIns(activeCharId(), questKey, instants, rejected)
     // Push so a turn-in recorded in one view (or detected from the log) reaches every other
     // view without a refetch race.
     sendToMain(IPC.onProgress, progress)

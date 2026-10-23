@@ -40,11 +40,11 @@
 
 import { type JSX, useMemo, useState } from 'react'
 import { Box, Chip, Paper, Stack, Typography } from '@mui/material'
-import CheckIcon from '@mui/icons-material/Check'
+import { HideTargetButton, TargetKilledBadge } from './cardCorners'
 import type { RaidTarget } from '@shared/types'
 import type { TargetStatus } from './bossStatus'
 import { tierLadder, type LadderRung, type TierLock } from './lockout'
-import DifficultyLadder from './DifficultyLadder'
+import DifficultyLadder, { type BaseRungMark } from './DifficultyLadder'
 import { loadoutGroups, type LoadoutCard, type LoadoutGrouping } from './loadoutGroups'
 import type { MobTarget } from '../mobs/mobTarget'
 import { tierStyle, type TierStyle } from '../../lib/tierChip'
@@ -115,29 +115,6 @@ function BossImage({
 }
 
 // The little tier-coloured tick in the card's top-left corner: "you have this one".
-function TargetKilledBadge({ tier }: { tier: TierStyle }): JSX.Element {
-  return (
-    <Box
-      sx={{
-        position: 'absolute',
-        top: 4,
-        left: 4,
-        zIndex: 1,
-        width: 20,
-        height: 20,
-        borderRadius: '50%',
-        bgcolor: tier.bg,
-        color: tier.fg,
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        boxShadow: 1
-      }}
-    >
-      <CheckIcon sx={{ fontSize: 14 }} />
-    </Box>
-  )
-}
 
 /**
  * What the corner chip says, and whether the card reads as "you have this one".
@@ -239,11 +216,14 @@ function TargetKillDate({ s, compact }: { s: TargetStatus; compact: boolean }): 
 function TargetCardCaption({
   s,
   compact,
-  ladder
+  ladder,
+  baseMark
 }: {
   s: TargetStatus
   compact: boolean
   ladder?: LadderRung[]
+  /** the d0 hand-mark affordance (week view only), forwarded straight to DifficultyLadder. */
+  baseMark?: BaseRungMark
 }): JSX.Element {
   return (
     <Box sx={{ p: compact ? 0.75 : 1 }}>
@@ -265,7 +245,7 @@ function TargetCardCaption({
           exactly when the week's lock function is (see `Section`), so it is the discriminator the
           removed `lock` prop used to be. */}
       {ladder ? (
-        <DifficultyLadder rungs={ladder} compact={compact} />
+        <DifficultyLadder rungs={ladder} compact={compact} baseMark={baseMark} />
       ) : s.killed ? (
         <TargetKillDate s={s} compact={compact} />
       ) : (
@@ -301,7 +281,10 @@ function TargetCard({
   flash,
   lock,
   ladder,
-  onOpen
+  baseMark,
+  onOpen,
+  hidden = false,
+  onToggleHidden
 }: {
   s: TargetStatus
   compact: boolean
@@ -313,7 +296,13 @@ function TargetCard({
    * this card's slice — see `Section`, which is where the two inputs part company.
    */
   ladder?: LadderRung[]
+  /** the d0 hand-mark affordance (week view only), forwarded to the ladder. */
+  baseMark?: BaseRungMark
   onOpen: () => void
+  /** This target is hidden (issue #32) — the card only renders under the toolbar's peek, DIMMED,
+   *  so a peeked roster reads as two populations rather than quietly merging them back. */
+  hidden?: boolean
+  onToggleHidden?: () => void
 }): JSX.Element {
   const imgH = compact ? 70 : 120
   const chip = chipFacts(s, tierStyle(s.bestTier), lock)
@@ -339,12 +328,14 @@ function TargetCard({
             : 'none',
         transform: flash ? 'scale(1.04)' : 'none',
         transition: 'transform 200ms, box-shadow 200ms, border-color 200ms',
-        '&:hover': { transform: flash ? 'scale(1.04)' : 'translateY(-2px)' }
+        '&:hover': { transform: flash ? 'scale(1.04)' : 'translateY(-2px)' },
+        opacity: hidden ? 0.45 : 1
       }}
     >
       {chip.on && <TargetKilledBadge tier={tier} />}
+      {onToggleHidden && <HideTargetButton name={s.target.name} hidden={hidden} onToggle={onToggleHidden} />}
       <TargetCardMedia s={s} chip={chip} height={imgH} />
-      <TargetCardCaption s={s} compact={compact} ladder={ladder} />
+      <TargetCardCaption s={s} compact={compact} ladder={ladder} baseMark={baseMark} />
     </Paper>
   )
 }
@@ -363,6 +354,16 @@ interface GridProps {
    * record.
    */
   lockOf?: (s: TargetStatus) => TierLock[]
+  /**
+   * WEEK VIEW ONLY, absent on OVERALL. `baseTs(s)` is the live manual d0-clear timestamp (or
+   * undefined) and goes straight into `tierLadder`; `canMarkBase(s)` is the gate (a credited
+   * open-world/unknown kill this week); `onToggleBase(s)` flips the mark.
+   */
+  manualClear?: { baseTs: (s: TargetStatus) => number | undefined; canMarkBase: (s: TargetStatus) => boolean; onToggleBase: (s: TargetStatus) => void }
+  /** Is this target hidden (issue #32)? A hidden card renders only under the toolbar's peek. */
+  hiddenOf?: (name: string) => boolean
+  /** The card's own hide/unhide control writes through this — the one writer of the set. */
+  onToggleHidden?: (name: string) => void
 }
 
 /** Everything a section needs to draw its grid — identical for both groupings. */
@@ -384,7 +385,7 @@ function wholeRows(list: TargetStatus[]): CardRow[] {
 }
 
 /** A header plus the grid under it. The ONE grid in this feature; both groupings use it. */
-function Section({ header, rows, compact, minCol, flashing, onOpenMob, lockOf }: GridProps & { header: JSX.Element; rows: CardRow[] }): JSX.Element {
+function Section({ header, rows, compact, minCol, flashing, onOpenMob, lockOf, manualClear, hiddenOf, onToggleHidden }: GridProps & { header: JSX.Element; rows: CardRow[] }): JSX.Element {
   return (
     <Box sx={{ mb: compact ? 1.5 : 2.5 }}>
       {header}
@@ -402,14 +403,16 @@ function Section({ header, rows, compact, minCol, flashing, onOpenMob, lockOf }:
             compact={compact}
             flash={flashing.has(row.s.target.name)}
             lock={lockOf?.(row.s)}
-            // THE LADDER READS `whole`, NOT `s` (JOS-152). The chip and the date line are claims
-            // about THIS CARD's kills, which under the loadout grouping is one tier run — right
-            // for them, wrong for a ladder. "Which of this boss's difficulties has my week taken"
-            // is a question about the BOSS, and answering it from a d4-only slice would grey out
-            // four rungs a d0 card two sections down is showing green. Under the category
-            // grouping (the default) `whole` IS `s`, so nothing moves there.
-            ladder={lockOf && tierLadder(lockOf(row.whole))}
+            // THE LADDER READS `whole`, NOT `s` (JOS-152). "Which of this boss's difficulties has
+            // my week taken" is a question about the BOSS: the chip and date line describe one
+            // tier run under the loadout grouping, but a ladder built from a d4-only slice would
+            // grey out four rungs a d0 card two sections down is showing green. `manualClear`'s
+            // hand-mark rides the same `whole`. Under the category grouping `whole` IS `s`.
+            ladder={lockOf && tierLadder(lockOf(row.whole), manualClear?.baseTs(row.whole))}
+            baseMark={manualClear && { canMark: manualClear.canMarkBase(row.whole), onToggle: () => manualClear.onToggleBase(row.whole) }}
             onOpen={() => onOpenMob(mobTargetForStatus(row.whole))}
+            hidden={hiddenOf?.(row.s.target.name) ?? false}
+            onToggleHidden={onToggleHidden && (() => onToggleHidden(row.s.target.name))}
           />
         ))}
       </Box>

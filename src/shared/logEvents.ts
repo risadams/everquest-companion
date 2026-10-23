@@ -18,7 +18,7 @@ import type { ConsiderFaction } from './considerFaction'
 // ./acquireEvents for the same reason the consider ladder moved out: this file is long past its
 // factoring ceiling. RE-EXPORTED verbatim, so every consumer still reads them from
 // `@shared/logEvents`, and the union below carries the three new members.
-import type { CoinEvent, ItemReceivedEvent, PurchaseEvent } from './acquireEvents'
+import type { CoinEvent, Coins, ItemReceivedEvent, PurchaseEvent } from './acquireEvents'
 
 // WHAT IS IN YOUR GEMS (JOS-391) — the memorize / forget / spell-set shapes, out in
 // ./gemEvents for the same file-mass reason as the two imports above. Re-exported verbatim.
@@ -93,6 +93,11 @@ export interface LootEventE extends LogEventBase {
   count?: number
   /** The upgraded item a 'combined' loot created (`… to create a <item> +N`). */
   created?: string
+  /**
+   * 'sold' only: what the auto-sale paid, in the coin shape a purchase's price uses
+   * (`… and sold it for 1 gold, 7 silver and 9 copper.`). `free` is `{}`.
+   */
+  price?: Coins
 }
 
 /** `You offered N <item> to <NPC>.` — one per item offered. */
@@ -129,6 +134,17 @@ export interface LevelEventE extends LogEventBase {
  * replaying the whole log through the pre-change parser). The only other lines containing
  * "experience" are 11 player chat lines and one mob emote (`Coercer T\`vala experiences a
  * quickening.`), which is why the classifier's regex is anchored at BOTH ends.
+ *
+ * A SERVER EXPERIENCE BONUS MOVES THE SENTENCE rather than adding one:
+ * `You gain experience (with a bonus)! (3.118%)`, with the parenthetical BEFORE the bang.
+ * SECOND-LOG SWEEP (read-only, 2026-09-04, 168 MB): while a bonus event runs the game prints
+ * that shape and NO plain gain line at all — 275 bonus lines and 0 plain lines over the event's
+ * first two hours — so an unmatched bonus shape blanks every experience surface, and `kills` its
+ * credited/witnessed split, for the event's whole duration. The stated percentage ALREADY carries
+ * the bonus: across the six level spans inside the event the bonus-line percentages still sum to
+ * 98.3-101.4 between dings, exactly as the plain lines do. So it needs no multiplier and carries
+ * no extra field — it is the same event. The party arm of the shape is unobserved, and matched
+ * anyway: two independent optional groups in a lane that already exists is not an invented arm.
  *
  * UNIT HONESTY (law 1): 1% at level 40 is far more raw experience than 1% at level 10, and
  * the log never states a raw exp number, a to-next-level total, or a bar position. Σ percent
