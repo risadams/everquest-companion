@@ -51,7 +51,9 @@ const DAYBREAK_SUBPATHS = [
 export interface DiscoveryProbes {
   /** True if `<root>\Logs` exists AND contains at least one `eqlog_*.txt`. */
   hasLogs: (root: string) => boolean
-  /** Ordered candidate roots to try before the drive sweep (env, registry). */
+  /** Explicit env override(s): tried first and NEVER reordered, so they outrank every installed game. */
+  explicitCandidates?: () => string[]
+  /** Ordered candidate roots to try before the drive sweep (registry; Legends-named paths first). */
   extraCandidates: () => string[]
   /** Fixed-drive letters to sweep, e.g. ['C:', 'D:']. */
   fixedDrives: () => string[]
@@ -328,10 +330,15 @@ export function tailSurvivesRootChange(
   return logIsUnderLogsDir(logPath, logsDir) && exists(logPath)
 }
 
+/** The env override(s), or none when the probes carry no explicit tier. */
+function explicitOf(probes: DiscoveryProbes): string[] {
+  return probes.explicitCandidates?.() ?? []
+}
+
 /**
  * Pure ordered discovery: return the first candidate root whose `Logs` dir holds
  * an `eqlog_*.txt`, or null if none match. Candidates, in order:
- *   1. `extraCandidates()` (env override, then registry InstallLocations)
+ *   1. `explicitCandidates()` (env override, never reordered), then `extraCandidates()` (registry)
  *   2. `<drive>\<subpath>` for every fixed drive × every Daybreak subpath
  * Duplicates are collapsed so a candidate is probed at most once.
  */
@@ -353,6 +360,7 @@ export function discoverEqRoot(probes: DiscoveryProbes): string | null {
     candidates.push(c)
   }
 
+  for (const c of explicitOf(probes)) push(c)
   // Each tier is `legendsFirst`-partitioned on its own, so a path naming Legends outranks a
   // sibling EverQuest install WITHIN its tier while the tiers keep their own precedence.
   for (const c of legendsFirst(probes.extraCandidates())) push(c)

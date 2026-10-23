@@ -490,3 +490,17 @@ test('discoverEqRoot: end-to-end with the real rootHasLogs predicate over a temp
     rmSync(tmp, { recursive: true, force: true })
   }
 })
+
+test('discoverEqRoot: an explicit env override outranks a registry install that names Legends', () => {
+  // The harness (EQ_INSTALL_DIR) and any user pointing the app at a copy must win over the real
+  // install the registry reports; legendsFirst reorders only the registry tier.
+  const env = String.raw`T:\staging\install`
+  const real = String.raw`D:\EverQuest Legends`
+  const hit = discoverEqRoot({
+    hasLogs: () => true,
+    explicitCandidates: () => [env],
+    extraCandidates: () => [real],
+    fixedDrives: () => []
+  })
+  assert.equal(hit, env)
+})

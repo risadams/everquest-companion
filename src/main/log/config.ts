@@ -86,10 +86,8 @@ const DISCOVERY_BUDGET_MS = 6000
 function realProbes(): DiscoveryProbes {
   return {
     hasLogs: rootHasLogs,
-    extraCandidates: () => [
-      ...envCandidates(),
-      ...registryInstallCandidates(Date.now() + DISCOVERY_BUDGET_MS)
-    ],
+    explicitCandidates: envCandidates,
+    extraCandidates: () => registryInstallCandidates(Date.now() + DISCOVERY_BUDGET_MS),
     fixedDrives,
     budgetMs: DISCOVERY_BUDGET_MS
   }
@@ -167,7 +165,8 @@ export function refreshEqDiscoveryCheaply(): void {
   if (discoveredRoot && rootHasLogs(discoveredRoot)) return
   const found = discoverEqRoot({
     hasLogs: rootHasLogs,
-    extraCandidates: envCandidates,
+    explicitCandidates: envCandidates,
+    extraCandidates: () => [],
     fixedDrives,
     budgetMs: DISCOVERY_BUDGET_MS
   })
